@@ -1,0 +1,3 @@
+fastapi[standard]
+firebase_admin
+phonenumbers

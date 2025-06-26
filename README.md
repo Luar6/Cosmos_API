@@ -2,9 +2,9 @@
 
 A API do nosso aplicativo Cosmos
 
-Para rodar, primeiro você baixa o FastAPI por meio do Pip
+Para rodar, primeiro você baixa todas as dependência por meio do pip
 ```bash
-pip install fastapi[standard]
+pip install -r requirements.txt
 ```
 
 E depois roda ele
