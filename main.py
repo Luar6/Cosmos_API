@@ -101,7 +101,7 @@ async def mostrar_todas_as_agendas_criadas():
         return agenda_ref.get()
 
 @app.post("/add/agenda/", tags=["Agenda"])
-async def criar_uma_agenda(nome_agenda: str, matéria: str):
+async def criar_uma_agenda(nome_agenda: str):
     uid = str(uuid.uuid4())
     agenda_ref.update({
         uid: {
