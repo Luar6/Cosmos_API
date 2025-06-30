@@ -5,9 +5,26 @@ import phonenumbers
 from phonenumbers import PhoneNumberFormat
 import uuid
 from datetime import datetime
+import os
+from dotenv import load_dotenv
 
-cred = credentials.Certificate("credentials.json")
-firebase_admin.initialize_app(cred, {"databaseURL": "https://if-project-3ded1-default-rtdb.firebaseio.com/"})
+load_dotenv()
+
+cred_info = {
+    "type": os.getenv("TYPE"),
+    "project_id": os.getenv("PROJECT_ID"),
+    "private_key_id": os.getenv("PRIVATE_KEY_ID"),
+    "private_key": os.getenv("PRIVATE_KEY").replace("\\n", "\n"),
+    "client_email": os.getenv("CLIENT_EMAIL"),
+    "client_id": os.getenv("CLIENT_ID"),
+    "auth_uri": os.getenv("AUTH_URI"),
+    "token_uri": os.getenv("TOKEN_URI"),
+    "auth_provider_x509_cert_url": os.getenv("AUTH_PROVIDER_CERT_URL"),
+    "client_x509_cert_url": os.getenv("CLIENT_CERT_URL")
+}
+
+cred = credentials.Certificate(cred_info)
+firebase_admin.initialize_app(cred, {"databaseURL": os.getenv("DATABASE_URL")})
 
 ref = db.reference("/")
 agenda_ref = ref.child('agenda')
