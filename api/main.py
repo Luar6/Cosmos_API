@@ -1,11 +1,23 @@
-from fastapi import FastAPI, HTTPException
-import firebase_admin
+from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi.responses import RedirectResponse
+
 from firebase_admin import credentials, db, auth
+import firebase_admin
+
 import phonenumbers
 from phonenumbers import PhoneNumberFormat
-import uuid
+
+from pydantic import BaseModel
+from typing import Optional
+
 from datetime import datetime
 import os
+import random
+import string
+import uuid
+import hashlib
+import base64
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,7 +39,7 @@ cred = credentials.Certificate(cred_info)
 firebase_admin.initialize_app(cred, {"databaseURL": os.getenv("DATABASE_URL")})
 
 ref = db.reference("/")
-agenda_ref = ref.child('agenda')
+agenda_ref = ref.child('agendas')
 
 def to_e164_br(phone_number):
     try:
@@ -46,6 +58,40 @@ def timestamp_formatado(timestamp):
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de timestamp inválido. Use ISO 8601 (ex: '2025-06-27T14:00:00')")
 
+def check_uid_exists(uid: str):
+    try:
+        user = auth.get_user(uid)
+        print(f"✅ User exists: {user.uid}, email: {user.email}")
+        return True
+    except auth.UserNotFoundError:
+        print("❌ No user found with that UID.")
+        return False
+    except Exception as e:
+        print(f"⚠️ Error: {e}")
+        return False
+
+def generate_random_invite_key(length: int = 12) -> str:
+    chars = string.ascii_letters + string.digits  # A-Z, a-z, 0-9
+    return ''.join(random.choices(chars, k=length))
+
+word = os.getenv("SECRET_API_WORD")
+hash_bytes = hashlib.sha256(word.encode()).digest()
+API_KEY = base64.urlsafe_b64encode(hash_bytes).rstrip(b'=').decode()
+API_KEY_NAME = "api_key"
+
+def get_api_key(api_key: str = Query(default=None, alias=API_KEY_NAME)):
+    if api_key == API_KEY:
+        return api_key
+    raise HTTPException(status_code=403, detail="Chave API não autorizada")
+
+STANDARD_RESPONSES = {
+    400: {"description": "Bad Request"},
+    401: {"description": "Unauthorized"},
+    403: {"description": "Forbidden"},
+    404: {"description": "Not Found"},
+    500: {"description": "Internal Server Error"},
+}
+
 tags_metadata = [
     {
         "name": "Usuários",
@@ -57,41 +103,79 @@ tags_metadata = [
     },
 ]
 
-app = FastAPI(openapi_tags=tags_metadata)
+app = FastAPI(title='Cosmos API', openapi_tags=tags_metadata)
+
+class AgendaPatch(BaseModel):
+    nome_agenda: Optional[str] = None
+    uid_do_responsável: Optional[str] = None
 
 @app.get("/")
 def read_root():
     return {"Hello": "World"}
 
-@app.get("/testFirebase")
+@app.get("/testFirebase", responses=STANDARD_RESPONSES)
 def testar_o_firebase():
     try:
         if ref.get():
-            message = "Conectado com successo ao Firebase"
+            return {"message": "Conectado com successo ao Firebase"}
     except Exception as e:
-        message = f"Falha ao se conectar com o Firebase: {str(e)}"
-    return {"message": message}
+        raise HTTPException(status_code=500, detail=f"Falha ao se conectar com o Firebase: {str(e)}")
 
-@app.get("/getAllUsers/", tags=["Usuários"])
-def conseguir_todos_os_usuarios_logado_com_o_email_normal_no_firebase():
+@app.get("/invite/{chave_de_convite_da_agenda}", responses=STANDARD_RESPONSES)
+def mandar_um_convite_para_entrar_na_turma_tipo_o_whatsapp(chave_de_convite_da_agenda: str, request: Request):
+    agenda_node = agenda_ref.order_by_child('chave_de_convite').equal_to(chave_de_convite_da_agenda)
+    agenda_data = agenda_node.get()
+
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"Essa agenda não existe")
+
+    for key, val in agenda_data.items():
+        return (f"UID da Agenda: {key}, Data: {val}")
+
+    # Detecta o dispositivo
+    user_agent = request.headers.get("user-agent", "").lower()
+
+    # Deep link do seu app (Expo deve estar configurado com "scheme": "cosmos")
+    deep_link_url = "cosmos://home"
+
+    # URL da Play Store (o pacote deve bater com o app.json do Expo)
+    play_store_url = "https://play.google.com/store/apps/details?id=com.seuapp.android"
+
+    if "android" in user_agent:
+        intent_url = (
+            f"intent://home#Intent;"
+            f"scheme=cosmos;"
+            f"package=com.seuapp.android;"
+            f"end"
+        )
+        return RedirectResponse(intent_url)
+
+    elif "iphone" in user_agent or "ipad" in user_agent:
+        return RedirectResponse(deep_link_url)
+
+    # Fallback para outros dispositivos (desktop, etc)
+    return RedirectResponse(play_store_url)
+
+@app.get("/getAllUsers/", tags=["Usuários"], responses=STANDARD_RESPONSES)
+def conseguir_todos_os_usuarios_logado_com_o_email_normal_no_firebase(api_key: str = Depends(get_api_key)):
     users = []
     page = auth.list_users()
     while page:
         for user in page.users:
             users.append({
                 "uid": user.uid,
-                "email": user.email or "",
-                "passwordHash": user.password_hash or "",
-                "passwordSalt": user.password_salt or "",
+                "email": user.email,
+                "passwordHash": user.password_hash,
+                "passwordSalt": user.password_salt,
+                "display_name": user.display_name,
                 "phone_number": user.phone_number or "",
-                "display_name": user.display_name or "",
-                "photo_url": user.photo_url or "",
+                "photo_url": user.photo_url or ""
             })
         page = page.get_next_page()
     return users
 
-@app.post("/add/user/", tags=["Usuários"])
-async def criar_um_usuario_com_email_e_senha(email: str, password: str, display_name: str, phone_number: str | None = None, photo_url: str | None = None):
+@app.post("/add/user/", tags=["Usuários"], responses=STANDARD_RESPONSES)
+async def criar_um_usuario_com_email_e_senha(email: str, password: str, display_name: str, phone_number: str | None = None, photo_url: str | None = None, api_key: str = Depends(get_api_key)):
     user = auth.create_user(
         email=email,
         email_verified=False,
@@ -100,51 +184,90 @@ async def criar_um_usuario_com_email_e_senha(email: str, password: str, display_
         display_name=display_name,
         photo_url=photo_url,
         disabled=False)
-    message = 'Criado um usuário com sucesso. UID: {0}'.format(user.uid)
-    return {"message": message}
 
-@app.delete("/delete/user", tags=["Usuários"])
-async def deletar_um_usuario_com_o_uid(uid: str):
-    auth.delete_user(uid)
-    message = f'O usuário com o UID {uid} foi deletado com sucesso.'
-    return {"message": message}
+    return {"message": 'Criado um usuário com sucesso. UID: {0}'.format(user.uid)}
 
-@app.get("/getAllAgendas", tags=["Agenda"])
-async def mostrar_todas_as_agendas_criadas():
+@app.delete("/delete/user", tags=["Usuários"], responses=STANDARD_RESPONSES)
+async def deletar_um_usuario_com_o_uid(uid: str, api_key: str = Depends(get_api_key)):
+    if check_uid_exists(uid):
+        auth.delete_user(uid)
+        return {"message": f'O usuário com o UID {uid} foi deletado com sucesso.'}
+    else:
+        raise HTTPException(status_code=400, detail="Este usuário não existe no banco de dados")
+
+@app.get("/getAllAgendas", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def mostrar_todas_as_agendas_criadas(api_key: str = Depends(get_api_key)):
     if agenda_ref.get() is None:
-        message = f'Nenhuma agenda foi criada'
-        return {"message": message}
+        return {"message": 'Nenhuma agenda foi criada'}
     else:
         return agenda_ref.get()
 
-@app.post("/add/agenda/", tags=["Agenda"])
-async def criar_uma_agenda(nome_agenda: str):
-    uid = str(uuid.uuid4())
-    agenda_ref.update({
-        uid: {
-            'nome_agenda': nome_agenda
+@app.post("/add/agenda/", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
+    if check_uid_exists(uid_do_responsavel):
+        uid = str(uuid.uuid4())
+        agenda_ref.update({
+            uid: {
+                'nome_agenda': nome_agenda,
+                'uid_do_responsável': uid_do_responsavel,
+                'chave_de_convite': generate_random_invite_key()
+            }
+        })
+
+        return {"message": f'A agenda {nome_agenda} com o UID {uid} foi criada com sucesso'}
+    else:
+        raise HTTPException(status_code=401, detail="Este usuário não existe no banco de dados")
+
+@app.post("/add/agenda/membro", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def adicionar_um_membro_na_agenda_já_criada(uid_da_agenda: str, uid_do_membro: str, api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda)
+    agenda_data = agenda_node.get()
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
+
+    if not check_uid_exists(uid_do_membro):
+        raise HTTPException(status_code=400, detail="Este usuário não existe no banco de dados")
+
+    user = auth.get_user(uid_do_membro)
+
+    membro_ref = agenda_node.child("membros")
+    membro_ref.update({
+        user.uid: {
+            'nome_do_usuário': user.display_name
         }
     })
-    message = f'A agenda {nome_agenda} com o UID {uid} foi criada com sucesso'
-    return {"message": message}
 
-@app.post("/add/agenda/materia", tags=["Agenda"])
-async def criar_uma_materia_na_agenda(uid_da_agenda: str, matéria: str):
-    matéria_criada = agenda_ref.child(uid_da_agenda).child("matérias")
+    return {"message": f'O membro {user.display} com o UID {user.uid} foi adicionado com sucesso'}
+
+@app.post("/add/agenda/materia", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def criar_uma_materia_na_agenda_já_criada(uid_da_agenda: str, nome_da_matéria: str, nome_do_professor: str | None = None, horario_de_inicio_da_materia: str | None = None, horario_de_fim_da_materia: str | None = None, api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda)
+    agenda_data = agenda_node.get()
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
+
+    matérias_ref = agenda_node.child("matérias")
     uid = str(uuid.uuid4())
-    matéria_criada.update({
+    matérias_ref.update({
         uid: {
-            'nome_matéria': matéria
+            'nome_matéria': nome_da_matéria,
+            'professor': nome_do_professor,
+            'horario_de_início': horario_de_inicio_da_materia,
+            "horário_de_fim": horario_de_fim_da_materia
         }
     })
-    message = f'A matéria {matéria} com o UID {uid} foi criada com sucesso'
-    return {"message": message}
 
-@app.post("/add/agenda/tarefa", tags=["Agenda"])
-async def criar_uma_tarefa_na_agenda_criada(uid_da_agenda: str, nome_da_tarefa: str, timestamp: str):
+    return {"message": f'A matéria {nome_da_matéria} com o UID {uid} foi criada com sucesso'}
+
+@app.post("/add/agenda/tarefa", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def criar_uma_tarefa_na_agenda_já_criada(uid_da_agenda: str, nome_da_tarefa: str, timestamp: str, api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda)
+    agenda_data = agenda_node.get()
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
+
     uid = str(uuid.uuid4())
-    tarefa_criada = agenda_ref.child(uid_da_agenda).child("tarefas")
-
+    tarefa_criada = agenda_node.child("tarefas")
     tarefa_criada.update({
         uid: {
             'nome_da_tarefa': nome_da_tarefa,
@@ -152,14 +275,17 @@ async def criar_uma_tarefa_na_agenda_criada(uid_da_agenda: str, nome_da_tarefa: 
         }
     })
 
-    message = f'O tarefa com o UID {uid} foi criada com sucesso.'
-    return {"message": message}
+    return {"message": f'A tarefa com o UID {uid} foi criada com sucesso.'}
 
-@app.post("/add/agenda/evento", tags=["Agenda"])
-async def criar_um_evento_na_agenda_criada(uid_da_agenda: str, nome_do_evento: str, timestamp: str):
+@app.post("/add/agenda/evento", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def criar_um_evento_na_agenda_já_criada(uid_da_agenda: str, nome_do_evento: str, timestamp: str, api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda)
+    agenda_data = agenda_node.get()
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
+
     uid = str(uuid.uuid4())
-    evento_criado = agenda_ref.child(uid_da_agenda).child("evento")
-
+    evento_criado = agenda_node.child("eventos")
     evento_criado.update({
         uid: {
             'nome_do_evento': nome_do_evento,
@@ -167,29 +293,136 @@ async def criar_um_evento_na_agenda_criada(uid_da_agenda: str, nome_do_evento: s
         }
     })
 
-    message = f'O tarefa com o UID {uid} foi criada com sucesso.'
-    return {"message": message}
+    return {"message": f'O evento com o UID {uid} foi criado com sucesso.'}
 
-@app.delete("/delete/agenda/", tags=["Agenda"])
-async def deletar_uma_agenda_com_o_uid(uid: str):
-    agenda_ref.child(uid).delete()
-    message = f'O agenda com o UID {uid} foi deletada com sucesso.'
-    return {"message": message}
+@app.delete("/delete/agenda/", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def deletar_uma_agenda_com_o_uid(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda)
+    agenda_data = agenda_node.get()
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
 
-@app.delete("/delete/agenda/materia", tags=["Agenda"])
-async def deletar_uma_materia_com_o_uid(uid_da_agenda: str, uid_da_materia: str):
-    agenda_ref.child(uid_da_agenda).child("matérias").child(uid_da_materia).delete()
-    message = f'A matéria com o UID {uid_da_materia} foi deletada com sucesso.'
-    return {"message": message}
+    agenda_node.delete()
 
-@app.delete("/delete/agenda/tarefa", tags=["Agenda"])
-async def deletar_uma_tarefa_com_o_uid(uid_da_agenda: str, uid_da_tarefa: str):
-    agenda_ref.child(uid_da_agenda).child("tarefas").child(uid_da_tarefa).delete()
-    message = f'A tarefa com o UID {uid_da_tarefa} foi deletada com sucesso.'
-    return {"message": message}
+    return {"message": f'A agenda com o UID {uid_da_agenda} foi deletada com sucesso.'}
 
-@app.delete("/delete/agenda/evento", tags=["Agenda"])
-async def deletar_um_evento_com_o_uid(uid_da_agenda: str, uid_do_evento: str):
-    agenda_ref.child(uid_da_agenda).child("evento").child(uid_do_evento).delete()
-    message = f'O evento com o UID {uid_do_evento} foi deletado com sucesso.'
-    return {"message": message}
+@app.delete("/delete/agenda/materia", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def deletar_uma_materia_com_o_uid(uid_da_agenda: str, uid_da_materia: str, api_key: str = Depends(get_api_key)):
+    matéria_node = agenda_ref.child(uid_da_agenda).child("matérias").child(uid_da_materia)
+    matéria_data = matéria_node.get()
+    if not matéria_data:
+        raise HTTPException(status_code=404, detail=f"A matéria com o UID {uid_da_materia} na agenda {uid_da_agenda} não existe")
+
+    matéria_node.delete()
+
+    return {"message": f'A matéria com o UID {uid_da_materia} foi deletada com sucesso.'}
+
+@app.delete("/delete/agenda/tarefa", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def deletar_uma_tarefa_com_o_uid(uid_da_agenda: str, uid_da_tarefa: str, api_key: str = Depends(get_api_key)):
+    tarefa_node = agenda_ref.child(uid_da_agenda).child("tarefas").child(uid_da_tarefa)
+    tarefa_data = tarefa_node.get()
+    if not tarefa_data:
+        raise HTTPException(status_code=404, detail=f"A tarefa com o UID {uid_da_tarefa} na agenda {uid_da_agenda} não existe")
+
+    tarefa_node.delete()
+
+    return {"message": f'A tarefa com o UID {uid_da_tarefa} foi deletada com sucesso.'}
+
+@app.delete("/delete/agenda/evento", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def deletar_um_evento_com_o_uid(uid_da_agenda: str, uid_do_evento: str, api_key: str = Depends(get_api_key)):
+    evento_node = agenda_ref.child(uid_da_agenda).child("eventos").child(uid_do_evento)
+    evento_data = evento_node.get()
+    if not evento_data:
+        raise HTTPException(status_code=404, detail=f"O evento com o UID {uid_do_evento} na agenda {uid_da_agenda} não existe")
+
+    evento_node.delete()
+
+    return {"message": f'O evento com o UID {uid_do_evento} foi deletado com sucesso.'}
+
+@app.patch("/update/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), nome_agenda: str = Query(None), uid_do_responsável: str = Query(None), api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda)
+    agenda_data = agenda_node.get()
+    if not agenda_data:
+        raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
+
+    update_data = {}
+    if nome_agenda is not None:
+        update_data["nome_agenda"] = nome_agenda
+    if uid_do_responsável is not None:
+        update_data["uid_do_responsável"] = uid_do_responsável
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum dado fornecido para atualização")
+
+    agenda_node.update(update_data)
+
+    return {"message": "Agenda atualizada com sucesso", "dados": update_data}
+
+@app.patch("/update/agenda/materia", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_da_materia: str = Query(...), nome_da_matéria: str = Query(None), nome_do_professor: str = Query(None), horario_de_inicio_da_materia: str = Query(None), horario_de_fim_da_materia: str = Query(None), api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda).child("matérias").child(uid_da_materia)
+    agenda_data = agenda_node.get()
+    if not matéria_data:
+        raise HTTPException(status_code=404, detail=f"A matéria com o UID {uid_da_materia} na agenda {uid_da_agenda} não existe")
+
+    update_data = {}
+    if nome_da_matéria is not None:
+        update_data["nome_matéria"] = nome_da_matéria
+    if nome_do_professor is not None:
+        update_data["professor"] = nome_do_professor
+    if horario_de_inicio_da_materia is not None:
+        update_data["horario_de_início"] = horario_de_inicio_da_materia
+    if horario_de_fim_da_materia is not None:
+        update_data["horario_de_fim"] = horario_de_fim_da_materia
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum dado fornecido para atualização")
+
+    agenda_node.update(update_data)
+
+    return {"message": "Agenda atualizada com sucesso", "dados": update_data}
+
+@app.patch("/update/agenda/tarefa", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_da_tarefa: str = Query(...), nome_da_tarefa: str = Query(None), timestamp: str = Query(None), api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda).child("tarefas").child(uid_da_tarefa)
+    agenda_data = agenda_node.get()
+    if not matéria_data:
+        raise HTTPException(status_code=404, detail=f"A tarefa com o UID {uid_da_tarefa} na agenda {uid_da_agenda} não existe")
+
+    timestamp_definido = timestamp_formatado(timestamp)
+
+    update_data = {}
+    if nome_da_tarefa is not None:
+        update_data["nome_da_tarefa"] = nome_da_tarefa
+    if timestamp_definido is not None:
+        update_data["timestamp"] = timestamp_definido
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum dado fornecido para atualização")
+
+    agenda_node.update(update_data)
+
+    return {"message": "Agenda atualizada com sucesso", "dados": update_data}
+
+@app.patch("/update/agenda/evento", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_do_evento: str = Query(...), nome_do_evento: str = Query(None), timestamp: str = Query(None), api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda).child("eventos").child(uid_do_evento)
+    agenda_data = agenda_node.get()
+    if not matéria_data:
+        raise HTTPException(status_code=404, detail=f"O evento com o UID {uid_do_evento} na agenda {uid_da_agenda} não existe")
+
+    timestamp_definido = timestamp_formatado(timestamp)
+
+    update_data = {}
+    if nome_da_tarefa is not None:
+        update_data["nome_do_evento"] = nome_do_evento
+    if timestamp_definido is not None:
+        update_data["timestamp"] = timestamp_definido
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum dado fornecido para atualização")
+
+    agenda_node.update(update_data)
+
+    return {"message": "Agenda atualizada com sucesso", "dados": update_data}
