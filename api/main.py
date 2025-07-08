@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, Depends, Query
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from firebase_admin import credentials, db, auth
 import firebase_admin
@@ -105,9 +106,15 @@ tags_metadata = [
 
 app = FastAPI(title='Cosmos API', openapi_tags=tags_metadata)
 
-class AgendaPatch(BaseModel):
-    nome_agenda: Optional[str] = None
-    uid_do_responsável: Optional[str] = None
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def read_root():
@@ -183,17 +190,45 @@ async def criar_um_usuario_com_email_e_senha(email: str, password: str, display_
         password=password,
         display_name=display_name,
         photo_url=photo_url,
-        disabled=False)
+        disabled=False
+    )
 
     return {"message": 'Criado um usuário com sucesso. UID: {0}'.format(user.uid)}
 
 @app.delete("/delete/user", tags=["Usuários"], responses=STANDARD_RESPONSES)
-async def deletar_um_usuario_com_o_uid(uid: str, api_key: str = Depends(get_api_key)):
-    if check_uid_exists(uid):
-        auth.delete_user(uid)
-        return {"message": f'O usuário com o UID {uid} foi deletado com sucesso.'}
+async def deletar_um_usuario_com_o_uid(uid_do_usuario: str, api_key: str = Depends(get_api_key)):
+    if check_uid_exists(uid_do_usuario):
+        auth.delete_user(uid_do_usuario)
+        return {"message": f'O usuário com o UID {uid_do_usuario} foi deletado com sucesso.'}
     else:
         raise HTTPException(status_code=400, detail="Este usuário não existe no banco de dados")
+
+@app.patch("/update/user", tags=["Usuários"], responses=STANDARD_RESPONSES)
+async def atualizar_os_dados_de_um_usuário(uid_do_usuario: str = Query(...), email: str = Query(None), password: str = Query(None), display_name: str = Query(None), phone_number: str = Query(None), photo_url: str = Query(None), disabled: bool = Query(None), api_key: str = Depends(get_api_key)):
+    if not check_uid_exists(uid_do_usuario):
+        raise HTTPException(status_code=404, detail="Este usuário não existe no banco de dados")
+
+    try:
+        update_data = {}
+        if email is not None:
+            update_data['email'] = email
+        if phone_number is not None:
+            update_data['phone_number'] = to_e164_br(phone_number)
+        if password is not None:
+            update_data['password'] = password
+        if display_name is not None:
+            update_data['display_name'] = display_name
+        if photo_url is not None:
+            update_data['photo_url'] = photo_url
+        if disabled is not None:
+            update_data['disabled'] = disabled
+
+        user = auth.update_user(uid_do_usuario, **update_data)
+
+        return {"message": f"Usuário {user.uid} atualizado com sucesso."}
+
+    except auth.AuthError as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao atualizar o usuário: {str(e)}")
 
 @app.get("/getAllAgendas", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def mostrar_todas_as_agendas_criadas(api_key: str = Depends(get_api_key)):
@@ -340,7 +375,7 @@ async def deletar_um_evento_com_o_uid(uid_da_agenda: str, uid_do_evento: str, ap
     return {"message": f'O evento com o UID {uid_do_evento} foi deletado com sucesso.'}
 
 @app.patch("/update/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
-async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), nome_agenda: str = Query(None), uid_do_responsável: str = Query(None), api_key: str = Depends(get_api_key)):
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), nome_agenda: str = Query(None), uid_do_responsavel: str = Query(None), api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda)
     agenda_data = agenda_node.get()
     if not agenda_data:
@@ -349,8 +384,8 @@ async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), nome_age
     update_data = {}
     if nome_agenda is not None:
         update_data["nome_agenda"] = nome_agenda
-    if uid_do_responsável is not None:
-        update_data["uid_do_responsável"] = uid_do_responsável
+    if uid_do_responsavel is not None:
+        update_data["uid_do_responsável"] = uid_do_responsavel
 
     if not update_data:
         raise HTTPException(status_code=400, detail="Nenhum dado fornecido para atualização")
