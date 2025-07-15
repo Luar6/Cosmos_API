@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, Query, UploadFile, File
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,6 +18,8 @@ import string
 import uuid
 import hashlib
 import base64
+
+import vercel_blob
 
 from dotenv import load_dotenv
 
@@ -85,11 +87,36 @@ def get_api_key(api_key: str = Query(default=None, alias=API_KEY_NAME)):
         return api_key
     raise HTTPException(status_code=403, detail="Chave API não autorizada")
 
+# Size limits
+PHOTO_LIMIT = 5 * 1024**2
+VIDEO_LIMIT = 50 * 1024**2
+DOCUMENT_LIMIT = 10 * 1024**2
+
+def get_file_category(content_type: str) -> str:
+    if content_type.startswith("image/"):
+        return "photo"
+    elif content_type.startswith("video/"):
+        return "video"
+    elif content_type in {
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/plain"
+    }:
+        return "document"
+    return "unknown"
+
+def get_size_limit(category: str) -> int:
+    return {"photo": PHOTO_LIMIT, "video": VIDEO_LIMIT, "document": DOCUMENT_LIMIT}.get(category, 0)
+
 STANDARD_RESPONSES = {
     400: {"description": "Bad Request"},
     401: {"description": "Unauthorized"},
     403: {"description": "Forbidden"},
     404: {"description": "Not Found"},
+    413: {"description": "Request Entity Too Large"},
     500: {"description": "Internal Server Error"},
 }
 
@@ -102,11 +129,21 @@ tags_metadata = [
         "name": "Agenda",
         "description": "Operações com a agenda",
     },
+    {
+        "name": "S3",
+        "description": "Operações com o bucket S3",
+    },
 ]
 
 app = FastAPI(title='Cosmos API', openapi_tags=tags_metadata)
 
-origins = ["*"]
+origins = [
+    "http://localhost",
+    "http://localhost:8000",
+    "http://127.0.0.1",
+    "http://127.0.0.1:8000",
+    "https://cosmos-api-two.vercel.app/",
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -163,7 +200,7 @@ def mandar_um_convite_para_entrar_na_turma_tipo_o_whatsapp(chave_de_convite_da_a
     # Fallback para outros dispositivos (desktop, etc)
     return RedirectResponse(play_store_url)
 
-@app.get("/getAllUsers/", tags=["Usuários"], responses=STANDARD_RESPONSES)
+@app.get("/getAllUsers", tags=["Usuários"], responses=STANDARD_RESPONSES)
 def conseguir_todos_os_usuarios_logado_com_o_email_normal_no_firebase(api_key: str = Depends(get_api_key)):
     users = []
     page = auth.list_users()
@@ -181,7 +218,7 @@ def conseguir_todos_os_usuarios_logado_com_o_email_normal_no_firebase(api_key: s
         page = page.get_next_page()
     return users
 
-@app.post("/add/user/", tags=["Usuários"], responses=STANDARD_RESPONSES)
+@app.post("/add/user", tags=["Usuários"], responses=STANDARD_RESPONSES)
 async def criar_um_usuario_com_email_e_senha(email: str, password: str, display_name: str, phone_number: str | None = None, photo_url: str | None = None, api_key: str = Depends(get_api_key)):
     user = auth.create_user(
         email=email,
@@ -237,7 +274,7 @@ async def mostrar_todas_as_agendas_criadas(api_key: str = Depends(get_api_key)):
     else:
         return agenda_ref.get()
 
-@app.post("/add/agenda/", tags=["Agenda"], responses=STANDARD_RESPONSES)
+@app.post("/add/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
     if check_uid_exists(uid_do_responsavel):
         uid = str(uuid.uuid4())
@@ -330,7 +367,7 @@ async def criar_um_evento_na_agenda_já_criada(uid_da_agenda: str, nome_do_event
 
     return {"message": f'O evento com o UID {uid} foi criado com sucesso.'}
 
-@app.delete("/delete/agenda/", tags=["Agenda"], responses=STANDARD_RESPONSES)
+@app.delete("/delete/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def deletar_uma_agenda_com_o_uid(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda)
     agenda_data = agenda_node.get()
@@ -461,3 +498,34 @@ async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_do_e
     agenda_node.update(update_data)
 
     return {"message": "Agenda atualizada com sucesso", "dados": update_data}
+
+@app.get("/blob/getAll", tags=["S3"], responses=STANDARD_RESPONSES)
+def list_all_blobs(api_key: str = Depends(get_api_key)):
+    return vercel_blob.list()
+
+@app.post("/blob/uploadFile", tags=["S3"], responses=STANDARD_RESPONSES)
+async def upload_file(file: UploadFile = File(...), api_key: str = Depends(get_api_key)):
+    content = await file.read()
+    category = get_file_category(file.content_type)
+    size_limit = get_size_limit(category)
+    if category == "unknown":
+        raise HTTPException(status_code=400, detail="Tipo de arquivo não suportado.")
+    if len(content) > size_limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo do tipo {category.capitalize()} muito grande. Tamanho máximo: {size_limit // (1024**2)} MB"
+        )
+    resp = vercel_blob.put(file.filename, content, verbose=False)
+    return {
+        "filename": file.filename,
+        "category": category,
+        "url": resp.get("url")
+    }
+
+@app.delete("/blob/deleteFile", tags=["S3"], responses=STANDARD_RESPONSES)
+async def delete_blob(url: str, api_key: str = Depends(get_api_key)):
+    try:
+        vercel_blob.delete(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"deleted": url}
