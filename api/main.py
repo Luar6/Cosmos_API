@@ -200,7 +200,7 @@ def mandar_um_convite_para_entrar_na_turma_tipo_o_whatsapp(chave_de_convite_da_a
     # Fallback para outros dispositivos (desktop, etc)
     return RedirectResponse(play_store_url)
 
-@app.get("/getAllUsers/", tags=["Usuários"], responses=STANDARD_RESPONSES)
+@app.get("/getAllUsers", tags=["Usuários"], responses=STANDARD_RESPONSES)
 def conseguir_todos_os_usuarios_logado_com_o_email_normal_no_firebase(api_key: str = Depends(get_api_key)):
     users = []
     page = auth.list_users()
@@ -218,7 +218,7 @@ def conseguir_todos_os_usuarios_logado_com_o_email_normal_no_firebase(api_key: s
         page = page.get_next_page()
     return users
 
-@app.post("/add/user/", tags=["Usuários"], responses=STANDARD_RESPONSES)
+@app.post("/add/user", tags=["Usuários"], responses=STANDARD_RESPONSES)
 async def criar_um_usuario_com_email_e_senha(email: str, password: str, display_name: str, phone_number: str | None = None, photo_url: str | None = None, api_key: str = Depends(get_api_key)):
     user = auth.create_user(
         email=email,
@@ -274,7 +274,7 @@ async def mostrar_todas_as_agendas_criadas(api_key: str = Depends(get_api_key)):
     else:
         return agenda_ref.get()
 
-@app.post("/add/agenda/", tags=["Agenda"], responses=STANDARD_RESPONSES)
+@app.post("/add/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
     if check_uid_exists(uid_do_responsavel):
         uid = str(uuid.uuid4())
@@ -367,7 +367,7 @@ async def criar_um_evento_na_agenda_já_criada(uid_da_agenda: str, nome_do_event
 
     return {"message": f'O evento com o UID {uid} foi criado com sucesso.'}
 
-@app.delete("/delete/agenda/", tags=["Agenda"], responses=STANDARD_RESPONSES)
+@app.delete("/delete/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def deletar_uma_agenda_com_o_uid(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda)
     agenda_data = agenda_node.get()
