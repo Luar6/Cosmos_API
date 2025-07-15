@@ -137,13 +137,7 @@ tags_metadata = [
 
 app = FastAPI(title='Cosmos API', openapi_tags=tags_metadata)
 
-origins = [
-    "http://localhost",
-    "http://localhost:8000",
-    "http://127.0.0.1",
-    "http://127.0.0.1:8000",
-    "https://cosmos-api-two.vercel.app/",
-]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
