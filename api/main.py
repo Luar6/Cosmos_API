@@ -43,6 +43,7 @@ firebase_admin.initialize_app(cred, {"databaseURL": os.getenv("DATABASE_URL")})
 
 ref = db.reference("/")
 agenda_ref = ref.child('agendas')
+agenda_membros_ref = ref.child('agenda_membros')
 
 def to_e164_br(phone_number):
     try:
@@ -268,42 +269,64 @@ async def mostrar_todas_as_agendas_criadas(api_key: str = Depends(get_api_key)):
     else:
         return agenda_ref.get()
 
+@app.get("/getAllAgendasLinkedToUser", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def mostrar_todas_as_agendas_que_o_usuário_faz_parte(uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
+    user_agenda_ids = agenda_membros_ref.child(uid_do_responsavel).get()
+
+    if not user_agenda_ids:
+        raise HTTPException(status_code=404, detail="O usuário não está ligado a nenhuma agenda")
+
+    agendas = {}
+    for agenda_id in user_agenda_ids:
+        agenda_data = agenda_ref.child(agenda_id).get()
+        if agenda_data:
+            agendas[agenda_id] = agenda_data
+
+    return agendas
+
 @app.post("/add/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
-    if check_uid_exists(uid_do_responsavel):
-        uid = str(uuid.uuid4())
-        agenda_ref.update({
-            uid: {
-                'nome_agenda': nome_agenda,
-                'uid_do_responsável': uid_do_responsavel,
-                'chave_de_convite': generate_random_invite_key()
-            }
-        })
-
-        return {"message": f'A agenda {nome_agenda} com o UID {uid} foi criada com sucesso'}
-    else:
+    if not check_uid_exists(uid_do_responsavel):
         raise HTTPException(status_code=401, detail="Este usuário não existe no banco de dados")
+
+    uid_da_agenda = str(uuid.uuid4())
+    agenda_ref.update({
+        uid_da_agenda: {
+            'nome_agenda': nome_agenda,
+            'chave_de_convite': generate_random_invite_key()
+        }
+    })
+
+    agenda_membros_ref.child(uid_do_responsavel).update({
+        uid_da_agenda: {
+            "role": "admin"
+        }
+    })
+
+    return {"message": f'A agenda {nome_agenda} com o UID {uid_da_agenda} foi criada com sucesso'}
+
 
 @app.post("/add/agenda/membro", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def adicionar_um_membro_na_agenda_já_criada(uid_da_agenda: str, uid_do_membro: str, api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda)
     agenda_data = agenda_node.get()
+
     if not agenda_data:
         raise HTTPException(status_code=404, detail=f"A agenda com o UID {uid_da_agenda} não existe")
 
     if not check_uid_exists(uid_do_membro):
-        raise HTTPException(status_code=400, detail="Este usuário não existe no banco de dados")
+        raise HTTPException(status_code=401, detail="Este usuário não existe no banco de dados")
 
     user = auth.get_user(uid_do_membro)
 
-    membro_ref = agenda_node.child("membros")
-    membro_ref.update({
-        user.uid: {
-            'nome_do_usuário': user.display_name
+    agenda_membros_ref.child(user.uid).update({
+        uid_da_agenda: {
+            "role": "user"
         }
     })
 
-    return {"message": f'O membro {user.display} com o UID {user.uid} foi adicionado com sucesso'}
+    return {"message": f'O membro {user.display_name} com o UID {user.uid} foi adicionado com sucesso na agenda {agenda_data["nome_agenda"]}'}
+
 
 @app.post("/add/agenda/materia", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_materia_na_agenda_já_criada(uid_da_agenda: str, nome_da_matéria: str, nome_do_professor: str | None = None, horario_de_inicio_da_materia: str | None = None, horario_de_fim_da_materia: str | None = None, api_key: str = Depends(get_api_key)):
@@ -371,6 +394,17 @@ async def deletar_uma_agenda_com_o_uid(uid_da_agenda: str, api_key: str = Depend
     agenda_node.delete()
 
     return {"message": f'A agenda com o UID {uid_da_agenda} foi deletada com sucesso.'}
+
+@app.delete("/delete/agenda/membro", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def deletar_um_membro_na_agenda(uid_da_agenda: str, uid_do_membro: str, api_key: str = Depends(get_api_key)):
+    membro_node = agenda_membros_ref.child(uid_do_membro).child(uid_da_agenda)
+    membro_data = membro_node.get()
+    if not membro_data:
+        raise HTTPException(status_code=404, detail=f"Esse usuário com o UID {uid_do_membro} não pertence a agenda com o UID {uid_da_agenda}")
+
+    membro_node.delete()
+
+    return {"message": f'O membro com o UID {uid_do_membro} foi removido da agenda com o UID {uid_da_agenda}'}
 
 @app.delete("/delete/agenda/materia", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def deletar_uma_materia_com_o_uid(uid_da_agenda: str, uid_da_materia: str, api_key: str = Depends(get_api_key)):
