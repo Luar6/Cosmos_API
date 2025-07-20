@@ -55,10 +55,9 @@ def to_e164_br(phone_number):
     except phonenumbers.NumberParseException:
         return None
 
-def timestamp_formatado(timestamp):
+def timestamp_formatado(dt: datetime) -> str:
     try:
-        data = datetime.fromisoformat(timestamp)
-        timestamp_formatado = data.isoformat()
+        return dt.replace(microsecond=0).isoformat()
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de timestamp inválido. Use ISO 8601 (ex: '2025-06-27T14:00:00')")
 
@@ -293,7 +292,8 @@ async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: s
     agenda_ref.update({
         uid_da_agenda: {
             'nome_agenda': nome_agenda,
-            'chave_de_convite': generate_random_invite_key()
+            'chave_de_convite': generate_random_invite_key(),
+            'firstCreated': timestamp_formatado(datetime.now())
         }
     })
 
@@ -349,7 +349,7 @@ async def criar_uma_materia_na_agenda_já_criada(uid_da_agenda: str, nome_da_mat
     return {"message": f'A matéria {nome_da_matéria} com o UID {uid} foi criada com sucesso'}
 
 @app.post("/add/agenda/tarefa", tags=["Agenda"], responses=STANDARD_RESPONSES)
-async def criar_uma_tarefa_na_agenda_já_criada(uid_da_agenda: str, nome_da_tarefa: str, timestamp: str, api_key: str = Depends(get_api_key)):
+async def criar_uma_tarefa_na_agenda_já_criada(uid_da_agenda: str, nome_da_tarefa: str, api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda)
     agenda_data = agenda_node.get()
     if not agenda_data:
@@ -360,14 +360,14 @@ async def criar_uma_tarefa_na_agenda_já_criada(uid_da_agenda: str, nome_da_tare
     tarefa_criada.update({
         uid: {
             'nome_da_tarefa': nome_da_tarefa,
-            'timestamp': timestamp_formatado(timestamp)
+            'timestamp': timestamp_formatado(datetime.now())
         }
     })
 
     return {"message": f'A tarefa com o UID {uid} foi criada com sucesso.'}
 
 @app.post("/add/agenda/evento", tags=["Agenda"], responses=STANDARD_RESPONSES)
-async def criar_um_evento_na_agenda_já_criada(uid_da_agenda: str, nome_do_evento: str, timestamp: str, api_key: str = Depends(get_api_key)):
+async def criar_um_evento_na_agenda_já_criada(uid_da_agenda: str, nome_do_evento: str, api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda)
     agenda_data = agenda_node.get()
     if not agenda_data:
@@ -378,7 +378,7 @@ async def criar_um_evento_na_agenda_já_criada(uid_da_agenda: str, nome_do_event
     evento_criado.update({
         uid: {
             'nome_do_evento': nome_do_evento,
-            'timestamp': timestamp_formatado(timestamp)
+            'timestamp': timestamp_formatado(datetime.now())
         }
     })
 
@@ -484,13 +484,13 @@ async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_da_m
     return {"message": "Agenda atualizada com sucesso", "dados": update_data}
 
 @app.patch("/update/agenda/tarefa", tags=["Agenda"], responses=STANDARD_RESPONSES)
-async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_da_tarefa: str = Query(...), nome_da_tarefa: str = Query(None), timestamp: str = Query(None), api_key: str = Depends(get_api_key)):
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_da_tarefa: str = Query(...), nome_da_tarefa: str = Query(None), api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda).child("tarefas").child(uid_da_tarefa)
     agenda_data = agenda_node.get()
     if not matéria_data:
         raise HTTPException(status_code=404, detail=f"A tarefa com o UID {uid_da_tarefa} na agenda {uid_da_agenda} não existe")
 
-    timestamp_definido = timestamp_formatado(timestamp)
+    timestamp_definido = timestamp_formatado(datetime.now())
 
     update_data = {}
     if nome_da_tarefa is not None:
@@ -506,13 +506,13 @@ async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_da_t
     return {"message": "Agenda atualizada com sucesso", "dados": update_data}
 
 @app.patch("/update/agenda/evento", tags=["Agenda"], responses=STANDARD_RESPONSES)
-async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_do_evento: str = Query(...), nome_do_evento: str = Query(None), timestamp: str = Query(None), api_key: str = Depends(get_api_key)):
+async def atualizar_os_dados_da_agenda(uid_da_agenda: str = Query(...), uid_do_evento: str = Query(...), nome_do_evento: str = Query(None), api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda).child("eventos").child(uid_do_evento)
     agenda_data = agenda_node.get()
     if not matéria_data:
         raise HTTPException(status_code=404, detail=f"O evento com o UID {uid_do_evento} na agenda {uid_da_agenda} não existe")
 
-    timestamp_definido = timestamp_formatado(timestamp)
+    timestamp_definido = timestamp_formatado(datetime.now())
 
     update_data = {}
     if nome_da_tarefa is not None:
