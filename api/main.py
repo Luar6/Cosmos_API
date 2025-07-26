@@ -303,7 +303,7 @@ async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: s
         }
     })
 
-    return {"message": f'A agenda {nome_agenda} com o UID {uid_da_agenda} foi criada com sucesso'}
+    return {"message": f'A agenda {nome_agenda} com o UID {uid_da_agenda} foi criada com sucesso, com o usuário com o UID {uid_do_responsavel} sendo o responsável por ela'}
 
 
 @app.post("/add/agenda/membro", tags=["Agenda"], responses=STANDARD_RESPONSES)
