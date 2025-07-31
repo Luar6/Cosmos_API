@@ -301,7 +301,7 @@ async def mostrar_todas_as_tarefas_dentro_de_uma_agenda(uid_da_agenda: str, api_
     if not tarefas:
         raise HTTPException(status_code=404, detail=f"A agenda '{uid_da_agenda}' não possui tarefas.")
 
-    return {"tarefas": tarefas}
+    return tarefas
 
 @app.get("/getAllMembrosFromOneAgenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def mostrar_todos_os_membros_dentro_de_uma_agenda(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
@@ -345,7 +345,7 @@ async def mostrar_todos_os_membros_dentro_de_uma_agenda(uid_da_agenda: str, api_
                 "info": "Usuário não encontrado no Firebase Auth"
             })
 
-    return {"membros": resultado}
+    return resultado
 
 @app.post("/add/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
