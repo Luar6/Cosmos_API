@@ -168,13 +168,13 @@ def mandar_um_convite_para_entrar_na_turma_tipo_o_whatsapp(chave_de_convite_da_a
         raise HTTPException(status_code=404, detail=f"Essa agenda não existe")
 
     for key, val in agenda_data.items():
-    return {
-        "id": key,
-        "uid_da_agenda": key,
-        "nome_agenda": val.get("nome_agenda"),
-        "chave_de_convite": val.get("chave_de_convite"),
-        "firstCreated": val.get("firstCreated")
-    }
+        return {
+            "id": key,
+            "uid_da_agenda": key,
+            "nome_agenda": val.get("nome_agenda"),
+            "chave_de_convite": val.get("chave_de_convite"),
+            "firstCreated": val.get("firstCreated")
+        }
 
     # Detecta o dispositivo
     user_agent = request.headers.get("user-agent", "").lower()
@@ -183,13 +183,13 @@ def mandar_um_convite_para_entrar_na_turma_tipo_o_whatsapp(chave_de_convite_da_a
     deep_link_url = "cosmos://home"
 
     # URL da Play Store (o pacote deve bater com o app.json do Expo)
-    play_store_url = "https://play.google.com/store/apps/details?id=com.seuapp.android"
+    play_store_url = "https://play.google.com/store/apps/details?id=com.luar6.cosmos"
 
     if "android" in user_agent:
         intent_url = (
             f"intent://home#Intent;"
             f"scheme=cosmos;"
-            f"package=com.seuapp.android;"
+            f"package=com.luar6.cosmos;"
             f"end"
         )
         return RedirectResponse(intent_url)
