@@ -290,7 +290,7 @@ async def mostrar_todas_as_agendas_que_o_usuário_faz_parte(uid_do_responsavel: 
     return agendas
 
 @app.get("/getAllTarefasFromOneAgenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
-async def get_all_tarefas_from_agenda(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
+async def mostrar_todas_as_tarefas_dentro_de_uma_agenda(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
     agenda_node = agenda_ref.child(uid_da_agenda).get()
 
     if not agenda_node:
@@ -302,6 +302,50 @@ async def get_all_tarefas_from_agenda(uid_da_agenda: str, api_key: str = Depends
         raise HTTPException(status_code=404, detail=f"A agenda '{uid_da_agenda}' não possui tarefas.")
 
     return {"tarefas": tarefas}
+
+@app.get("/getAllMembrosFromOneAgenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def mostrar_todos_os_membros_dentro_de_uma_agenda(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
+    membros_geral = agenda_membros_ref.get()
+    if not membros_geral:
+        raise HTTPException(status_code=404, detail="Não há membros vinculados a nenhuma agenda.")
+
+    membros_da_agenda = {}
+
+    for uid_usuario, agendas in membros_geral.items():
+        if uid_da_agenda in agendas:
+            role = agendas[uid_da_agenda].get("role", "Desconhecido")
+            membros_da_agenda[uid_usuario] = role
+
+    if not membros_da_agenda:
+        raise HTTPException(status_code=404, detail=f"Nenhum membro encontrado para a agenda '{uid_da_agenda}'.")
+
+    todos_usuarios = {}
+    page = auth.list_users()
+    while page:
+        for user in page.users:
+            todos_usuarios[user.uid] = {
+                "uid": user.uid,
+                "email": user.email,
+                "display_name": user.display_name,
+                "phone_number": user.phone_number or "",
+                "photo_url": user.photo_url or ""
+            }
+        page = page.get_next_page()
+
+    resultado = []
+    for uid, role in membros_da_agenda.items():
+        usuario_info = todos_usuarios.get(uid)
+        if usuario_info:
+            usuario_info["role"] = role
+            resultado.append(usuario_info)
+        else:
+            resultado.append({
+                "uid": uid,
+                "role": role,
+                "info": "Usuário não encontrado no Firebase Auth"
+            })
+
+    return {"membros": resultado}
 
 @app.post("/add/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
