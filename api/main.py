@@ -289,6 +289,20 @@ async def mostrar_todas_as_agendas_que_o_usuário_faz_parte(uid_do_responsavel: 
 
     return agendas
 
+@app.get("/getAllTarefasFromOneAgenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
+async def get_all_tarefas_from_agenda(uid_da_agenda: str, api_key: str = Depends(get_api_key)):
+    agenda_node = agenda_ref.child(uid_da_agenda).get()
+
+    if not agenda_node:
+        raise HTTPException(status_code=404, detail=f"A agenda com UID '{uid_da_agenda}' não existe.")
+
+    tarefas = agenda_node.get("tarefas")
+
+    if not tarefas:
+        raise HTTPException(status_code=404, detail=f"A agenda '{uid_da_agenda}' não possui tarefas.")
+
+    return {"tarefas": tarefas}
+
 @app.post("/add/agenda", tags=["Agenda"], responses=STANDARD_RESPONSES)
 async def criar_uma_agenda(nome_agenda: str, uid_do_responsavel: str, api_key: str = Depends(get_api_key)):
     if not check_uid_exists(uid_do_responsavel):
