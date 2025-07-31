@@ -168,7 +168,13 @@ def mandar_um_convite_para_entrar_na_turma_tipo_o_whatsapp(chave_de_convite_da_a
         raise HTTPException(status_code=404, detail=f"Essa agenda não existe")
 
     for key, val in agenda_data.items():
-        return (f"UID da Agenda: {key}, Data: {val}")
+    return {
+        "id": key,
+        "uid_da_agenda": key,
+        "nome_agenda": val.get("nome_agenda"),
+        "chave_de_convite": val.get("chave_de_convite"),
+        "firstCreated": val.get("firstCreated")
+    }
 
     # Detecta o dispositivo
     user_agent = request.headers.get("user-agent", "").lower()
